@@ -10,8 +10,8 @@ function App() {
   const [role, setRole] = useState(null)
   
   // Login Form Inputs
-  const [loginUser, setLoginUser] = useState("HERO_DLR") // Updated default
-  const [loginPass, setLoginPass] = useState("admin")
+  const [loginUser, setLoginUser] = useState() // Updated default
+  const [loginPass, setLoginPass] = useState()
   const [loginRole, setLoginRole] = useState("dealer")
   const [authError, setAuthError] = useState("")
   const [loading, setLoading] = useState(false)
@@ -179,7 +179,8 @@ function App() {
         </form>
         
         <div className="login-footer">
-          <p>Demo: <strong>HERO_DLR</strong> / <strong>admin</strong></p>
+          <p>Demo Dealer: <strong>HERO_DLR</strong> / <strong>admin</strong></p>
+          <p>Demo Owner: <strong>rahul</strong> / <strong>123</strong></p>
         </div>
       </div>
     </div>
