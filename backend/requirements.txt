@@ -1,9 +1,11 @@
 fastapi
-uvicorn[standard]
-pydantic
+uvicorn
+psycopg2-binary
+langchain
+langchain-ollama
 langgraph
-sqlalchemy>=2.0
-psycopg2-binary>=2.9
-python-dotenv>=1.0
-passlib[bcrypt]>=1.7
-bcrypt==3.2.2
+langchain_core
+python-dotenv
+websockets
+pydantic
+sqlalchemy  # (If robust_db.py still uses it, though we moved to psycopg2 for agents)
