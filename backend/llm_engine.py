@@ -153,29 +153,34 @@ def book_appointment(slot: str, vehicle_id: str):
 
 @tool
 def update_vehicle_status(vehicle_id: str, status: str):
-    # Mapping string status to boolean active for our schema if needed, or just log it
+    """Updates the active status of a vehicle in the database."""
     is_active = True if status.lower() == "active" else False
     query_pg("UPDATE vehicles SET is_active = %s WHERE chassis_number = %s", (is_active, vehicle_id))
     return f"Status for {vehicle_id} updated to {status}."
 
 @tool
 def brave_search(query: str):
+    """Performs a web search (Simulated offline mode)."""
     return "Offline Mode: Internet unavailable. Please use internal diagnosis tools."
 
 @tool
 def send_notification_to_owner(vehicle_id: str, message: str):
+    """Sends an alert to the maintenance team."""
     return "Notification sent."
 
 @tool
 def send_alert_to_maintenance_team(vehicle_id: str, message: str):
+    """Sends an alert to the maintenance team."""
     return "Alert sent."
 
 @tool
 def log_customer_feedback(feedback: str, rating: int):
+    """Logs customer feedback and rating."""
     return "Feedback saved."
 
 @tool
 def report_manufacturing_defect(component: str, issue_description: str, vehicle_id: str):
+    """Reports a manufacturing defect to the engineering team."""
     print(f"🏭 REPORTING TO FACTORY: Defect in {component} for {vehicle_id}: {issue_description}")
     return "Defect report submitted to Engineering Team."
 

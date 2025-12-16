@@ -26,7 +26,6 @@ from alert_service import AlertTriggerService
 from request_security import RequestSecurityMiddleware
 from access_control import apply_access_control
 
-# *** REPLACED: Old 'agent_graph' with new 'llm_engine' ***
 from llm_engine import app as agent_app 
 
 app = FastAPI()

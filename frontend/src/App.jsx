@@ -1,20 +1,23 @@
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import ManagerBookings from './ManagerBookings'
 import ChatbotWidget from './ChatbotWidget'
+import './App.css' // Ensures the new styles are applied
 
 function App() {
   // --- AUTH STATE ---
-  const [session, setSession] = useState(null) // Holds full user/dealer object
-  const [role, setRole] = useState(null) // 'user' | 'dealer'
+  const [session, setSession] = useState(null)
+  const [role, setRole] = useState(null)
   
   // Login Form Inputs
-  const [loginUser, setLoginUser] = useState("DLR_TATA")
+  const [loginUser, setLoginUser] = useState("HERO_DLR") // Updated default
   const [loginPass, setLoginPass] = useState("admin")
   const [loginRole, setLoginRole] = useState("dealer")
+  const [authError, setAuthError] = useState("")
+  const [loading, setLoading] = useState(false)
 
   // --- DEALER STATE ---
-  const [activeTab, setActiveTab] = useState("inventory") // 'inventory' | 'sold'
+  const [activeTab, setActiveTab] = useState("inventory")
   const [newVin, setNewVin] = useState("")
   const [newModel, setNewModel] = useState("Tata Nexon EV")
   const [assignTarget, setAssignTarget] = useState("rahul")
@@ -38,37 +41,53 @@ function App() {
 
   const handleLogin = async (e) => {
     e.preventDefault()
+    setAuthError("")
+    setLoading(true)
     try {
-      const res = await axios.post("http://localhost:8001/login", {
+      // Note: Backend port 8000 based on your previous config
+      const res = await axios.post("http://localhost:8000/login", {
         username: loginUser, password: loginPass, role: loginRole
       })
       setSession(res.data.data)
       setRole(res.data.role)
       
-      // If User, auto-select first car
       if (res.data.role === "user" && res.data.data.vehicles.length > 0) {
         setSelectedCar(res.data.data.vehicles[0])
       }
-    } catch (err) { alert("Login Failed") }
+    } catch (err) { 
+      setAuthError("Login Failed. Check credentials or backend.") 
+    } finally {
+      setLoading(false)
+    }
   }
 
   const addStock = async () => {
     if(!newVin) return alert("Enter VIN")
     try {
-      const res = await axios.post("http://localhost:8001/dealer/add-stock", {
-        dealer_id: session.id, vehicle_id: newVin, model: newModel
+      const res = await axios.post("http://localhost:8000/dealer/add-stock", {
+        dealer_id: session.dealer_id, // Updated to match DB response
+        chassis_number: newVin,       // Updated to match backend key
+        model: newModel
       })
-      setSession({...session, inventory: res.data})
-      setNewVin(""); alert("Stock Added!")
+      // Refresh session logic or append locally
+      alert("Stock Added!")
+      // In a real app, we'd refetch dealer data here
     } catch (e) { alert("Error adding stock") }
   }
 
   const assignCar = async (vin) => {
     try {
-      const res = await axios.post("http://localhost:8001/dealer/assign", {
-        dealer_id: session.id, vehicle_id: vin, target_username: assignTarget
+      const res = await axios.post("http://localhost:8000/dealer/assign", {
+        dealer_id: session.dealer_id, 
+        chassis_number: vin, 
+        target_username: assignTarget
       })
-      setSession({...session, inventory: res.data.inventory, sold_vehicles: res.data.sold})
+      // Update inventory locally for immediate feedback
+      setSession(prev => ({
+        ...prev, 
+        inventory: res.data.inventory, 
+        sold_vehicles: res.data.sold
+      }))
       alert(`Assigned ${vin} to ${assignTarget}`)
     } catch (e) { alert("Assignment Failed (User exists?)") }
   }
@@ -76,33 +95,33 @@ function App() {
   const toggleAttack = async () => {
     const next = !attackMode
     setAttackMode(next)
-    await axios.post(`http://localhost:8001/toggle-attack/${next}`)
+    await axios.post(`http://localhost:8000/toggle-attack/${next}`)
   }
 
   const bookService = async () => {
-    if (!selectedCar || !telemetry?.repair_recommendation) {
+    if (!selectedCar || !telemetry?.predicted_failure_type) {
       return alert("No issue detected to book against yet.")
     }
     try {
-      const res = await axios.post("http://localhost:8001/book-service", {
-        vehicle_id: selectedCar.id,
-        owner_name: session.name,
-        issue: telemetry.repair_recommendation.issue,
-        dealer_name: selectedCar.dealer.name,
-        center_id: centerId, // ensure backend center selection
+      const res = await axios.post("http://localhost:8000/book-service", {
+        chassis_number: selectedCar.chassis_number,
+        owner_name: session.full_name,
+        issue: telemetry.predicted_failure_type,
+        dealer_name: selectedCar.dealer_id || "Hero MotoCorp",
+        center_id: centerId,
       })
-      const tid = res.data.ticket_id ?? null
-      if (tid) setTicket(tid)
+      const tid = res.data.ticket_id ?? "TKT-000"
+      setTicket(tid)
     } catch (err) {
-      const msg = err?.response?.data || err?.message || "Booking failed"
-      alert(`Booking failed: ${JSON.stringify(msg)}`)
+      alert("Booking failed")
     }
   }
 
   // ================= WEBSOCKET =================
   useEffect(() => {
     if (role !== "user" || !selectedCar) return;
-    const ws = new WebSocket(`ws://localhost:8001/ws/1?vehicle_id=${selectedCar.id}&role=user`)
+    // Connecting to Backend Port 8000
+    const ws = new WebSocket(`ws://localhost:8000/ws/1?vehicle_id=${selectedCar.chassis_number}&role=user`)
     ws.onmessage = (e) => setTelemetry(JSON.parse(e.data))
     socketRef.current = ws
     return () => ws.close()
@@ -112,7 +131,7 @@ function App() {
     const fetchSecurity = async () => {
       if (role !== "dealer") return
       try {
-        const res = await axios.get("http://localhost:8001/security/logs")
+        const res = await axios.get("http://localhost:8000/security/logs")
         setSecurityLogs(res.data.logs || [])
       } catch (e) { /* ignore */ }
     }
@@ -120,285 +139,283 @@ function App() {
   }, [role])
 
 
-  // ================= STYLES =================
-  const styles = {
-    base: { fontFamily: 'Segoe UI', background: '#0f172a', color: 'white', minHeight: '100vh', padding: '20px' },
-    card: { background: '#1e293b', padding: '20px', borderRadius: '10px', marginBottom: '20px' },
-    input: { padding: '10px', background: '#334155', border: '1px solid #475569', color: 'white', borderRadius: '5px', marginRight: '10px' },
-    btn: { padding: '10px 20px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' },
-    table: { width: '100%', borderCollapse: 'collapse', marginTop: '10px' },
-    th: { textAlign: 'left', padding: '10px', color: '#94a3b8', borderBottom: '1px solid #334155' },
-    td: { padding: '10px', borderBottom: '1px solid #334155' }
-  }
-
-  // ================= VIEW: LOGIN =================
+  // ================= VIEW: LOGIN (Stylized) =================
   if (!session) return (
-    <div style={{...styles.base, display:'flex', justifyContent:'center', alignItems:'center'}}>
-      <div style={{...styles.card, width: '350px', textAlign: 'center'}}>
-        <h1>🔐 Fleet Login</h1>
-        <div style={{marginBottom:'20px'}}>
-           <button style={{...styles.btn, background: loginRole==='dealer'?'#2563eb':'#334155'}} onClick={()=>setLoginRole('dealer')}>Dealer</button>
-           <button style={{...styles.btn, marginLeft:'10px', background: loginRole==='user'?'#2563eb':'#334155'}} onClick={()=>setLoginRole('user')}>Owner</button>
+    <div className="login-wrapper">
+      <div className="login-card">
+        <div className="login-header">
+          <h1>AutoDoc</h1>
+          <p>Intelligent Fleet Management</p>
         </div>
-        <form onSubmit={handleLogin}>
-          <input style={{...styles.input, width:'90%', marginBottom:'10px'}} value={loginUser} onChange={e=>setLoginUser(e.target.value)} placeholder="Username" />
-          <input style={{...styles.input, width:'90%', marginBottom:'20px'}} type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} placeholder="Password" />
-          <button style={{...styles.btn, width:'100%'}}>LOGIN</button>
+        
+        <div style={{display:'flex', justifyContent:'center', gap:'10px', marginBottom:'20px'}}>
+           <button 
+             className={`login-btn ${loginRole !== 'dealer' ? 'secondary' : ''}`} 
+             style={{background: loginRole==='dealer'?'var(--primary)':'rgba(255,255,255,0.1)'}}
+             onClick={()=>setLoginRole('dealer')}
+           >Dealer</button>
+           <button 
+             className={`login-btn ${loginRole !== 'user' ? 'secondary' : ''}`}
+             style={{background: loginRole==='user'?'var(--primary)':'rgba(255,255,255,0.1)'}}
+             onClick={()=>setLoginRole('user')}
+           >Owner</button>
+        </div>
+
+        <form onSubmit={handleLogin} className="login-form">
+          <div className="form-group">
+            <label>Username</label>
+            <input value={loginUser} onChange={e=>setLoginUser(e.target.value)} placeholder="e.g. HERO_DLR" />
+          </div>
+          <div className="form-group">
+            <label>Password</label>
+            <input type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} placeholder="Password" />
+          </div>
+          
+          {authError && <div className="error-message">{authError}</div>}
+
+          <button type="submit" className="login-btn" disabled={loading}>
+            {loading ? 'Authenticating...' : 'LOGIN'}
+          </button>
         </form>
-        <p style={{color:'#64748b', fontSize:'0.8em', marginTop:'20px'}}>
-          Defaults:<br/>Dealer: DLR_TATA / admin<br/>User: rahul / 123
-        </p>
+        
+        <div className="login-footer">
+          <p>Demo: <strong>HERO_DLR</strong> / <strong>admin</strong></p>
+        </div>
       </div>
     </div>
   )
 
   // ================= VIEW: DEALER DASHBOARD =================
   if (role === "dealer") return (
-    <div style={styles.base}>
-      <div style={{display:'flex', justifyContent:'space-between', marginBottom:'20px'}}>
-        <h1>🏢 {session.name} <span style={{fontSize:'0.5em', color:'#94a3b8'}}>DEALER PORTAL</span></h1>
-        <button onClick={()=>setSession(null)} style={{...styles.btn, background:'#dc2626'}}>Logout</button>
-      </div>
+    <div className="dashboard-container">
+      <header className="dashboard-header">
+        <h2>AutoDoc <span className="highlight">Dealer Portal</span></h2>
+        <div style={{display:'flex', alignItems:'center'}}>
+          <span style={{marginRight:'15px', color:'var(--text-gray)'}}>{session.full_name}</span>
+          <button onClick={()=>setSession(null)} className="logout-btn">Logout</button>
+        </div>
+      </header>
 
-      {/* TABS */}
-      <div style={{marginBottom:'20px'}}>
-        <button style={{...styles.btn, background: activeTab==='inventory'?'#2563eb':'#334155', marginRight:'10px'}} onClick={()=>setActiveTab('inventory')}>📦 Unassigned Stock</button>
-        <button style={{...styles.btn, background: activeTab==='sold'?'#2563eb':'#334155'}} onClick={()=>setActiveTab('sold')}>🤝 Sales History</button>
-      </div>
+      <main className="dashboard-content">
+        <div className="stats-grid">
+            <div className="stat-card">
+              <h3>Inventory</h3>
+              <p className="stat-number">{session.inventory?.length || 0}</p>
+            </div>
+            <div className="stat-card">
+              <h3>Vehicles Sold</h3>
+              <p className="stat-number">{session.sold_vehicles?.length || 0}</p>
+            </div>
+            <div className="stat-card">
+               <h3>Security Alerts</h3>
+               <p className="stat-number alert">{securityLogs.length}</p>
+            </div>
+        </div>
 
-      {activeTab === 'inventory' && (
-        <div style={styles.card}>
-          <h3>Add New Vehicle Stock</h3>
-          <div style={{display:'flex', gap:'10px', marginBottom:'20px'}}>
-            <input style={styles.input} value={newVin} onChange={e=>setNewVin(e.target.value)} placeholder="Enter VIN (e.g. MH-101)" />
-            <select style={styles.input} value={newModel} onChange={e=>setNewModel(e.target.value)}>
-              <option>Tata Nexon EV</option>
-              <option>Tata Harrier</option>
-              <option>Tata Punch</option>
-            </select>
-            <button style={{...styles.btn, background:'#10b981'}} onClick={addStock}>+ ADD TO STOCK</button>
+        {/* TABS */}
+        <div style={{marginBottom:'20px'}}>
+          <button 
+            className="login-btn" 
+            style={{width:'auto', marginRight:'10px', background: activeTab==='inventory'?'var(--primary)':'var(--bg-card)'}} 
+            onClick={()=>setActiveTab('inventory')}
+          >📦 Unassigned Stock</button>
+          <button 
+            className="login-btn" 
+            style={{width:'auto', background: activeTab==='sold'?'var(--primary)':'var(--bg-card)'}} 
+            onClick={()=>setActiveTab('sold')}
+          >🤝 Sales History</button>
+        </div>
+
+        {activeTab === 'inventory' && (
+          <div className="inventory-section">
+            <h3>Add New Vehicle Stock</h3>
+            <div style={{display:'flex', gap:'10px', marginBottom:'20px', alignItems:'end'}}>
+              <div className="form-group" style={{marginBottom:0}}>
+                <label>VIN</label>
+                <input value={newVin} onChange={e=>setNewVin(e.target.value)} placeholder="e.g. MH-101" />
+              </div>
+              <div className="form-group" style={{marginBottom:0}}>
+                <label>Model</label>
+                <select style={{padding:'12px', borderRadius:'8px', background:'rgba(0,0,0,0.2)', color:'white', border:'1px solid rgba(255,255,255,0.1)'}} value={newModel} onChange={e=>setNewModel(e.target.value)}>
+                  <option>Tata Nexon EV</option>
+                  <option>Hero Splendor</option>
+                  <option>Mahindra Thar</option>
+                </select>
+              </div>
+              <button className="login-btn" style={{width:'auto', background:'var(--success)'}} onClick={addStock}>+ ADD</button>
+            </div>
+
+            <h3>Available Inventory</h3>
+            <table>
+              <thead><tr><th>VIN</th><th>Model</th><th>Action</th></tr></thead>
+              <tbody>
+                {(session.inventory || []).map(car => (
+                  <tr key={car.chassis_number}>
+                    <td>{car.chassis_number}</td>
+                    <td>{car.model}</td>
+                    <td>
+                      <div style={{display:'flex', gap:'10px'}}>
+                        <input placeholder="Username" style={{padding:'5px', background:'transparent', border:'1px solid #555', color:'white'}} value={assignTarget} onChange={e=>setAssignTarget(e.target.value)} />
+                        <button className="badge success" style={{border:'none', cursor:'pointer'}} onClick={()=>assignCar(car.chassis_number)}>SELL</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        )}
 
-          <h3>Available Inventory</h3>
-          <table style={styles.table}>
-            <thead><tr><th style={styles.th}>VIN</th><th style={styles.th}>Model</th><th style={styles.th}>Action</th></tr></thead>
+        {activeTab === 'sold' && (
+          <div className="inventory-section">
+            <h3>Sales History</h3>
+            <table>
+              <thead><tr><th>VIN</th><th>Model</th><th>Owner</th><th>Date</th></tr></thead>
+              <tbody>
+                {(session.sold_vehicles || []).map(sale => (
+                  <tr key={sale.chassis_number}>
+                    <td>{sale.chassis_number}</td>
+                    <td>{sale.model}</td>
+                    <td><span className="badge success">{sale.owner_username}</span></td>
+                    <td>{sale.sale_date}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div style={{marginTop:'2rem'}}>
+           <ManagerBookings centerId={centerId} onCenterChange={setCenterId} serviceCenters={serviceCenters} />
+        </div>
+
+        <div className="inventory-section" style={{marginTop:'2rem'}}>
+          <h3>🛡️ UEBA Security Logs</h3>
+          <table>
+            <thead><tr><th>Path</th><th>Method</th><th>Score</th><th>Findings</th></tr></thead>
             <tbody>
-              {session.inventory.map(car => (
-                <tr key={car.id}>
-                  <td style={styles.td}>{car.id}</td>
-                  <td style={styles.td}>{car.model}</td>
-                  <td style={styles.td}>
-                    Assign to: <input style={{...styles.input, padding:'5px', width:'80px'}} value={assignTarget} onChange={e=>setAssignTarget(e.target.value)} />
-                    <button style={{...styles.btn, padding:'5px 10px', fontSize:'0.8em'}} onClick={()=>assignCar(car.id)}>SELL</button>
-                  </td>
+              {securityLogs.slice(-10).reverse().map((log, idx) => (
+                <tr key={idx}>
+                  <td>{log.path}</td>
+                  <td>{log.method}</td>
+                  <td style={{color: log.score > 50 ? 'var(--danger)' : 'var(--text-light)'}}>{log.score}</td>
+                  <td>{(log.findings || []).join(', ')}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {session.inventory.length === 0 && <p style={{color:'#64748b'}}>No stock available. Add some above.</p>}
         </div>
-      )}
-
-      {activeTab === 'sold' && (
-        <div style={styles.card}>
-          <h3>Sold Vehicles (Service CRM)</h3>
-          <table style={styles.table}>
-            <thead><tr><th style={styles.th}>VIN</th><th style={styles.th}>Model</th><th style={styles.th}>Owner Name</th><th style={styles.th}>Contact</th><th style={styles.th}>Date</th></tr></thead>
-            <tbody>
-              {session.sold_vehicles.map(sale => (
-                <tr key={sale.id}>
-                  <td style={styles.td}>{sale.id}</td>
-                  <td style={styles.td}>{sale.model}</td>
-                  <td style={styles.td}><span style={{color:'#4ade80', fontWeight:'bold'}}>{sale.owner_name}</span></td>
-                  <td style={styles.td}>{sale.owner_phone}</td>
-                  <td style={styles.td}>{sale.sale_date}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <ManagerBookings centerId={centerId} onCenterChange={setCenterId} serviceCenters={serviceCenters} styles={styles} />
-
-      <div style={styles.card}>
-        <h3>🛡️ UEBA Security Center</h3>
-        <div style={{fontSize:'0.9em', color:'#94a3b8'}}>Recent web/behavior alerts</div>
-        <table style={styles.table}>
-          <thead><tr><th style={styles.th}>Path</th><th style={styles.th}>Method</th><th style={styles.th}>IP</th><th style={styles.th}>Score</th><th style={styles.th}>Findings</th></tr></thead>
-          <tbody>
-            {securityLogs.slice(-20).reverse().map((log, idx) => (
-              <tr key={idx}>
-                <td style={styles.td}>{log.path}</td>
-                <td style={styles.td}>{log.method}</td>
-                <td style={styles.td}>{log.ip}</td>
-                <td style={styles.td}>{log.score}</td>
-                <td style={styles.td}>{(log.findings || []).join(', ')}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {securityLogs.length === 0 && <p style={{color:'#64748b'}}>No security alerts logged.</p>}
-      </div>
+      </main>
     </div>
   )
 
   // ================= VIEW: USER DASHBOARD =================
   return (
-    <div style={styles.base}>
-      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-        <h1>🚗 My Garage <span style={{fontSize:'0.5em', color:'#94a3b8'}}>Welcome, {session.name}</span></h1>
-        <div>
-          <button style={{...styles.btn, marginRight:'10px', background:attackMode?'#dc2626':'#475569'}} onClick={toggleAttack}>{attackMode?'STOP SIM':'SIMULATE ISSUE'}</button>
-          <button onClick={()=>setSession(null)} style={{...styles.btn, background:'#334155'}}>Logout</button>
+    <div className="dashboard-container">
+      <header className="dashboard-header">
+        <h2>My <span className="highlight">Garage</span></h2>
+        <div style={{display:'flex', alignItems:'center', gap:'15px'}}>
+          <button 
+            className="badge" 
+            style={{background: attackMode?'var(--danger)':'var(--bg-card)', color:'white', border:'1px solid #555', cursor:'pointer'}} 
+            onClick={toggleAttack}
+          >
+            {attackMode ? '⚠️ STOP SIMULATION' : '🧪 SIMULATE ATTACK'}
+          </button>
+          <button onClick={()=>setSession(null)} className="logout-btn">Logout</button>
         </div>
-      </div>
+      </header>
 
-      {session.vehicles.length === 0 ? (
-        <div style={{...styles.card, textAlign:'center', marginTop:'50px'}}>
-          <h2>Empty Garage 😢</h2>
-          <p>You haven't bought any cars yet.</p>
-          <p>Ask your dealer to assign a vehicle to username: <strong>{loginUser}</strong></p>
-        </div>
-      ) : (
-        <div style={{display:'flex', gap:'20px'}}>
-          {/* CAR SELECTOR */}
-          <div style={{width:'250px'}}>
-             {session.vehicles.map(v => (
-               <div key={v.id} onClick={()=>{setSelectedCar(v); setTicket(null)}} style={{...styles.card, cursor:'pointer', border: selectedCar?.id===v.id?'2px solid #2563eb':'1px solid #334155'}}>
-                 <div style={{fontWeight:'bold'}}>{v.model}</div>
-                 <div style={{fontSize:'0.8em', color:'#94a3b8'}}>{v.id}</div>
-               </div>
-             ))}
+      <main className="dashboard-content">
+        {(session.vehicles || []).length === 0 ? (
+          <div className="stat-card" style={{textAlign:'center'}}>
+            <h2>Empty Garage 😢</h2>
+            <p>You haven't bought any cars yet.</p>
           </div>
-          
-          {/* MAIN DASHBOARD */}
-          <div style={{flex:1}}>
-            {telemetry ? (
-              <div style={styles.card}>
-                 <div style={{display:'flex', justifyContent:'space-between'}}>
-                    <h2>Live Monitor: {selectedCar.model}</h2>
-                    <h2 style={{color: telemetry.risk_score==='HIGH_RISK'?'#ef4444':'#4ade80'}}>{telemetry.risk_score}</h2>
+        ) : (
+          <div className="content-row">
+            {/* CAR SELECTOR */}
+            <div style={{display:'flex', flexDirection:'column', gap:'15px'}}>
+               {(session.vehicles || []).map(v => (
+                 <div key={v.chassis_number} onClick={()=>{setSelectedCar(v); setTicket(null)}} 
+                      className="stat-card"
+                      style={{cursor:'pointer', border: selectedCar?.chassis_number===v.chassis_number?'2px solid var(--primary)':'1px solid transparent'}}>
+                   <h3>{v.model}</h3>
+                   <p style={{margin:0, color:'var(--text-gray)'}}>{v.chassis_number}</p>
                  </div>
-                 
-                 <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'10px', marginTop:'20px'}}>
-                    <div style={{background:'#0f172a', padding:'20px', textAlign:'center', borderRadius:'8px'}}>
-                       <div style={{color:'#94a3b8'}}>TEMP</div>
-                       <div style={{fontSize:'2em'}}>{telemetry.temperature}°C</div>
-                    </div>
-                    <div style={{background:'#0f172a', padding:'20px', textAlign:'center', borderRadius:'8px'}}>
-                       <div style={{color:'#94a3b8'}}>VIBRATION</div>
-                       <div style={{fontSize:'2em'}}>{telemetry.vibration}</div>
-                    </div>
-                    <div style={{background:'#0f172a', padding:'20px', textAlign:'center', borderRadius:'8px'}}>
-                       <div style={{color:'#94a3b8'}}>RPM</div>
-                       <div style={{fontSize:'2em'}}>{telemetry.rpm}</div>
-                    </div>
-                 </div>
+               ))}
+            </div>
+            
+            {/* MAIN MONITOR */}
+            <div style={{flex:1}}>
+              {telemetry ? (
+                <div className="stat-card" style={{borderTop: '4px solid var(--primary)'}}>
+                   <div style={{display:'flex', justifyContent:'space-between', marginBottom:'20px'}}>
+                      <h2>Live Monitor: {selectedCar.model}</h2>
+                      <div className="badge" style={{fontSize:'1rem', background: telemetry.risk_score_numeric > 0.8 ? 'var(--danger)' : 'var(--success)'}}>
+                        Risk: {telemetry.risk_score_numeric}
+                      </div>
+                   </div>
+                   
+                   <div className="stats-grid">
+                      <div style={{background:'rgba(0,0,0,0.3)', padding:'15px', borderRadius:'8px', textAlign:'center'}}>
+                         <div style={{color:'var(--text-gray)'}}>TEMP</div>
+                         <div style={{fontSize:'1.5rem', fontWeight:'bold'}}>{telemetry.temperature}°C</div>
+                      </div>
+                      <div style={{background:'rgba(0,0,0,0.3)', padding:'15px', borderRadius:'8px', textAlign:'center'}}>
+                         <div style={{color:'var(--text-gray)'}}>VIBRATION</div>
+                         <div style={{fontSize:'1.5rem', fontWeight:'bold'}}>{telemetry.vibration}</div>
+                      </div>
+                      <div style={{background:'rgba(0,0,0,0.3)', padding:'15px', borderRadius:'8px', textAlign:'center'}}>
+                         <div style={{color:'var(--text-gray)'}}>RPM</div>
+                         <div style={{fontSize:'1.5rem', fontWeight:'bold'}}>{telemetry.rpm}</div>
+                      </div>
+                   </div>
 
-                 {telemetry.ueba && (
-                   <div style={{marginTop:'10px', padding:'14px', background:'#1f2937', borderRadius:'8px', border:'1px solid #334155'}}>
-                     <div style={{display:'flex', justifyContent:'space-between'}}>
-                        <div style={{fontWeight:'bold'}}>Data Integrity Status</div>
-                        <div style={{color: telemetry.ueba.ueba_status === 'CRITICAL' ? '#ef4444' : telemetry.ueba.ueba_status === 'SUSPICIOUS' ? '#f59e0b' : '#4ade80'}}>
-                          {telemetry.ueba.ueba_status}
+                   {/* UEBA STATUS */}
+                   {telemetry.ueba && (
+                     <div style={{marginTop:'15px', padding:'15px', background:'rgba(255,255,255,0.05)', borderRadius:'8px'}}>
+                       <div style={{fontWeight:'bold', color:'var(--primary)'}}>🛡️ Data Integrity Check</div>
+                       <div style={{fontSize:'0.9rem', marginTop:'5px'}}>Status: {telemetry.ueba.ueba_status} (Score: {telemetry.ueba.ueba_score})</div>
+                     </div>
+                   )}
+
+                   {/* EXTENDED TELEMETRY */}
+                   <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(120px, 1fr))', gap:'10px', marginTop:'20px'}}>
+                      <div className="badge">Oil Quality: {telemetry.oil_quality_contaminants_V_oil}</div>
+                      <div className="badge">Battery: {telemetry.battery_soh_percent}%</div>
+                      <div className="badge">Brake Wear: {telemetry.brake_pad_wear_percent}%</div>
+                   </div>
+
+                   {/* ALERT & BOOKING */}
+                   {telemetry.predicted_failure_type !== "None" && telemetry.risk_score_numeric > 0.5 && (
+                     <div style={{marginTop:'20px', padding:'20px', background:'rgba(239, 68, 68, 0.1)', borderRadius:'8px', border:'1px solid var(--danger)'}}>
+                        <h3 style={{color:'var(--danger)', margin:'0 0 10px 0'}}>⚠️ Issue Detected: {telemetry.predicted_failure_type}</h3>
+                        <p>Recommended Action: Check {telemetry.root_cause_sensor}</p>
+                        
+                        <div style={{marginTop:'15px', display:'flex', gap:'10px', alignItems:'center'}}>
+                           <select style={{padding:'10px', borderRadius:'6px'}} value={centerId} onChange={e=>setCenterId(e.target.value)}>
+                              {serviceCenters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                           </select>
+                           
+                           {ticket ? (
+                             <div className="badge success">✅ Booked! Ticket: {ticket}</div>
+                           ) : (
+                             <button onClick={bookService} className="login-btn" style={{width:'auto', background:'var(--danger)'}}>
+                               BOOK REPAIR
+                             </button>
+                           )}
                         </div>
                      </div>
-                     <div style={{color:'#94a3b8', marginTop:'6px'}}>Score: {telemetry.ueba.ueba_score}</div>
-                     <ul style={{marginTop:'6px', paddingLeft:'18px', color:'#cbd5e1'}}>
-                       {(telemetry.ueba.ueba_findings || []).map((f,i)=><li key={i}>{f}</li>)}
-                     </ul>
-                   </div>
-                 )}
-
-                 {/* Extended Telemetry (additive) */}
-                 <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'10px', marginTop:'10px'}}>
-                    {telemetry.vehicle_type && (
-                      <div style={{background:'#0f172a', padding:'14px', borderRadius:'8px'}}>
-                        <div style={{color:'#94a3b8'}}>Type</div>
-                        <div style={{fontSize:'1.1em'}}>{telemetry.vehicle_type}</div>
-                      </div>
-                    )}
-                    {telemetry.ev_battery_temp_C !== undefined && (
-                      <div style={{background:'#0f172a', padding:'14px', borderRadius:'8px'}}>
-                        <div style={{color:'#94a3b8'}}>EV Batt Temp</div>
-                        <div>{telemetry.ev_battery_temp_C}°C</div>
-                      </div>
-                    )}
-                    {telemetry.ev_voltage_stability !== undefined && (
-                      <div style={{background:'#0f172a', padding:'14px', borderRadius:'8px'}}>
-                        <div style={{color:'#94a3b8'}}>EV Volt Stability</div>
-                        <div>{telemetry.ev_voltage_stability}</div>
-                      </div>
-                    )}
-                    {telemetry.petrol_knock_index !== undefined && (
-                      <div style={{background:'#0f172a', padding:'14px', borderRadius:'8px'}}>
-                        <div style={{color:'#94a3b8'}}>Knock Index</div>
-                        <div>{telemetry.petrol_knock_index}</div>
-                      </div>
-                    )}
-                    {telemetry.truck_axle_load_imbalance !== undefined && (
-                      <div style={{background:'#0f172a', padding:'14px', borderRadius:'8px'}}>
-                        <div style={{color:'#94a3b8'}}>Axle Imbalance</div>
-                        <div>{telemetry.truck_axle_load_imbalance}</div>
-                      </div>
-                    )}
-                    {telemetry.ambulance_high_rpm_flag !== undefined && (
-                      <div style={{background:'#0f172a', padding:'14px', borderRadius:'8px'}}>
-                        <div style={{color:'#94a3b8'}}>Amb High RPM</div>
-                        <div>{telemetry.ambulance_high_rpm_flag ? "Yes" : "No"}</div>
-                      </div>
-                    )}
-                    {telemetry.motorcycle_vibration !== undefined && (
-                      <div style={{background:'#0f172a', padding:'14px', borderRadius:'8px'}}>
-                        <div style={{color:'#94a3b8'}}>Moto Vib</div>
-                        <div>{telemetry.motorcycle_vibration}</div>
-                      </div>
-                    )}
-                    {telemetry.truck_exhaust_temp_C !== undefined && (
-                      <div style={{background:'#0f172a', padding:'14px', borderRadius:'8px'}}>
-                        <div style={{color:'#94a3b8'}}>Exhaust Temp</div>
-                        <div>{telemetry.truck_exhaust_temp_C}°C</div>
-                      </div>
-                    )}
-                    {telemetry.ev_cell_delta_V !== undefined && (
-                      <div style={{background:'#0f172a', padding:'14px', borderRadius:'8px'}}>
-                        <div style={{color:'#94a3b8'}}>Cell ΔV</div>
-                        <div>{telemetry.ev_cell_delta_V} V</div>
-                      </div>
-                    )}
-                 </div>
-
-                 {/* RCA / BOOKING SECTION */}
-                 {telemetry.repair_recommendation && (
-                   <div style={{marginTop:'20px', padding:'20px', background:'#1e3a8a', borderRadius:'8px', border:'1px solid #3b82f6'}}>
-                      <h3>🔧 Issue Detected: {telemetry.repair_recommendation.issue}</h3>
-                      <p>Fix: {telemetry.repair_recommendation.action}</p>
-                      <hr style={{borderColor:'#3b82f6', margin:'15px 0'}}/>
-                      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-                         <div>
-                            <div style={{fontSize:'0.8em', opacity:0.7}}>SERVICE PARTNER</div>
-                            <strong>{selectedCar.dealer.name}</strong>
-                            <div style={{marginTop:'8px'}}>
-                              <select style={styles.input} value={centerId} onChange={e=>{setCenterId(e.target.value); setTicket(null)}}>
-                                {serviceCenters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                              </select>
-                            </div>
-                         </div>
-                         {ticket ? (
-                           <div style={{background:'#064e3b', padding:'10px', borderRadius:'5px'}}>✅ Ticket: {ticket}</div>
-                         ) : (
-                           <button onClick={bookService} style={{...styles.btn, background:'#10b981'}}>BOOK SERVICE APPOINTMENT</button>
-                         )}
-                      </div>
-                   </div>
-                 )}
-              </div>
-            ) : <p>Connecting to satellite...</p>}
-            <ChatbotWidget vehicleId={selectedCar?.id} styles={styles} />
+                   )}
+                </div>
+              ) : <p style={{padding:'20px'}}>📡 Connecting to vehicle telemetry...</p>}
+              
+              <ChatbotWidget vehicleId={selectedCar?.chassis_number} />
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </main>
     </div>
   )
 }
