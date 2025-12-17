@@ -1,172 +1,116 @@
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
-
 from sqlalchemy.orm import joinedload
+from database import Dealer, ServiceBooking, User, Vehicle, ensure_seed_data, init_db, session_scope, verify_password
 
-from database import (
-    Dealer,
-    ServiceBooking,
-    User,
-    Vehicle,
-    ensure_seed_data,
-    init_db,
-    session_scope,
-    verify_password,
-    Appointment
-)
-
-# Initialize
 init_db()
 
 def _serialize_dealer(dealer: Dealer) -> Dict:
-    """
-    Helper to format dealer data for the frontend.
-    """
-    # 1. Get Inventory
-    inventory = [
-        {"id": v.chassis_number, "chassis_number": v.chassis_number, "model": v.model, "status": "Available"}
-        for v in dealer.vehicles
-        if v.owner_id is None
-    ]
-    
-    # 2. Get Sold History
-    sold = []
+    # 1. Inventory (Unsold)
+    inventory = []
     for v in dealer.vehicles:
         if v.owner_id is None:
-            continue
-        sold.append(
-            {
-                "id": v.chassis_number,
-                "chassis_number": v.chassis_number, # Added for consistency
+            inventory.append({
+                "chassis_number": v.chassis_number, # --- FIX: App.jsx needs this key
                 "model": v.model,
-                "owner_username": v.owner.username if v.owner else "Unknown", 
-                "owner_name": v.owner.full_name if v.owner else "Unknown",
-                "owner_phone": v.owner.phone if v.owner else "N/A",
-                "sale_date": (v.sale_date.strftime("%Y-%m-%d") if v.sale_date else None),
-            }
-        )
-        
+                "status": "Available"
+            })
+            
+    # 2. Sold History
+    sold = []
+    for v in dealer.vehicles:
+        if v.owner_id:
+            sold.append({
+                "chassis_number": v.chassis_number, # --- FIX: App.jsx needs this key
+                "model": v.model,
+                "owner_username": v.owner.username if v.owner else "Unknown",
+                "sale_date": str(v.sale_date.date()) if v.sale_date else "N/A"
+            })
+
     return {
-        "id": dealer.user.username, 
-        "dealer_id": str(dealer.dealer_id), 
-        "name": dealer.user.full_name,
-        "location": dealer.location,
-        "contact": dealer.contact,
+        "dealer_id": str(dealer.dealer_id), # --- FIX: API calls need this UUID
+        "username": dealer.user.username,
+        "full_name": dealer.user.full_name, # --- FIX: Header needs 'full_name'
         "inventory": inventory,
         "sold_vehicles": sold,
     }
 
+def _serialize_owner(user: User) -> Dict:
+    vehicles = []
+    for v in user.vehicles:
+        vehicles.append({
+            "chassis_number": v.chassis_number, # --- FIX
+            "model": v.model,
+            "dealer_id": str(v.dealer_id) if v.dealer_id else None
+        })
+        
+    return {
+        "user_id": str(user.user_id),
+        "username": user.username,
+        "full_name": user.full_name, # --- FIX
+        "vehicles": vehicles
+    }
 
 def authenticate_dealer(username, password) -> Optional[Dict]:
     with session_scope() as session:
-        # 1. Find User
         user = session.query(User).filter(User.username == username).first()
-        if not user or not verify_password(password, user.password_hash):
-            return None
+        if not user or not verify_password(password, user.password_hash): return None
         
-        # 2. Ensure Role
-        if user.role not in ["ADMIN", "DEALER"]:
-            return None
-
-        # 3. Find Dealer Profile
         dealer = session.query(Dealer).filter(Dealer.user_id == user.user_id).options(
             joinedload(Dealer.vehicles).joinedload(Vehicle.owner),
             joinedload(Dealer.user)
         ).first()
         
-        if not dealer:
-            return None
-
+        if not dealer: return None
         return _serialize_dealer(dealer)
-
 
 def authenticate_owner(username, password) -> Optional[Dict]:
     with session_scope() as session:
         user = session.query(User).filter(User.username == username).first()
-        if not user or not verify_password(password, user.password_hash):
-            return None
-
-        vehicles = session.query(Vehicle).filter(Vehicle.owner_id == user.user_id).all()
+        if not user or not verify_password(password, user.password_hash): return None
         
-        return {
-            "user_id": str(user.user_id),
-            "username": user.username,
-            "full_name": user.full_name, # Mapped to support App.jsx
-            "name": user.full_name,
-            "vehicles": [
-                {
-                    "id": v.chassis_number,
-                    "chassis_number": v.chassis_number,
-                    "model": v.model,
-                    "dealer_id": str(v.dealer_id) if v.dealer_id else None,
-                    "dealer": {
-                        "name": v.dealer.user.full_name if v.dealer and v.dealer.user else "Hero MotoCorp"
-                    }
-                }
-                for v in vehicles
-            ],
-        }
+        # Ensure vehicles are loaded
+        session.query(Vehicle).filter(Vehicle.owner_id == user.user_id).all()
+        return _serialize_owner(user)
 
-
-def add_stock(dealer_id_uuid: str, chassis_number: str, model: str) -> bool:
-    """
-    Adds a vehicle to a dealer's inventory.
-    """
+def add_stock(dealer_id_or_user, chassis_number, model):
     with session_scope() as session:
-        # Check exists
-        if session.query(Vehicle).filter_by(chassis_number=chassis_number).first():
-            return False
+        if session.query(Vehicle).filter_by(chassis_number=chassis_number).first(): return False
         
-        new_vehicle = Vehicle(
+        # Determine dealer_id (handle if UUID string passed)
+        v = Vehicle(
             chassis_number=chassis_number,
-            dealer_id=dealer_id_uuid, # Uses UUID
+            dealer_id=dealer_id_or_user, 
             model=model,
             category="4W",
-            make="AutoDoc OEM",
+            make="AutoDoc",
             manufacturing_year=2025,
             is_active=True
         )
-        session.add(new_vehicle)
+        session.add(v)
         return True
 
-
-def assign_vehicle(dealer_id_uuid: str, chassis_number: str, target_username: str) -> Tuple[bool, str]:
-    """
-    Assigns a vehicle from dealer to user.
-    """
+def assign_vehicle(dealer_id, chassis_number, target_username):
     with session_scope() as session:
         target = session.query(User).filter_by(username=target_username).first()
-        if not target:
-            return False, "User not found"
+        if not target: return False, "User not found"
+        
+        v = session.query(Vehicle).filter_by(chassis_number=chassis_number, dealer_id=dealer_id).first()
+        if not v: return False, "Vehicle not found"
+        
+        v.owner_id = target.user_id
+        v.sale_date = datetime.utcnow()
+        return True, "Assigned"
 
-        vehicle = session.query(Vehicle).filter_by(chassis_number=chassis_number, dealer_id=dealer_id_uuid).first()
-        if not vehicle:
-            return False, "Vehicle not found in your inventory"
-
-        if vehicle.owner_id:
-            return False, "Vehicle already owned"
-
-        vehicle.owner_id = target.user_id
-        vehicle.sale_date = datetime.utcnow()
-        return True, "Vehicle assigned successfully"
-
-
-def get_dealer_snapshot(dealer_id_uuid: str) -> Optional[Dict]:
-    """Refreshes dealer data after an operation."""
+def get_dealer_snapshot(dealer_id):
     with session_scope() as session:
-        dealer = session.query(Dealer).filter(Dealer.dealer_id == dealer_id_uuid).options(
-            joinedload(Dealer.vehicles).joinedload(Vehicle.owner),
-            joinedload(Dealer.user)
-        ).first()
-        if not dealer: return None
-        return _serialize_dealer(dealer)
-
+        dealer = session.query(Dealer).filter(Dealer.dealer_id == dealer_id).first()
+        if dealer: return _serialize_dealer(dealer)
+        return None
 
 def record_service_booking(ticket_id, chassis, owner_name, issue, center_id, center_name):
     with session_scope() as session:
-        # Find UUIDs if possible, else store loose references
         vehicle = session.query(Vehicle).filter_by(chassis_number=chassis).first()
-        
         booking = ServiceBooking(
             ticket_id=ticket_id,
             chassis_number=chassis,
@@ -179,29 +123,20 @@ def record_service_booking(ticket_id, chassis, owner_name, issue, center_id, cen
         session.add(booking)
         return True
 
-
-def list_service_bookings(center_id: Optional[str] = None) -> List[Dict]:
+def list_service_bookings(center_id=None):
     with session_scope() as session:
-        query = session.query(ServiceBooking).options(
-            joinedload(ServiceBooking.vehicle),
-            joinedload(ServiceBooking.owner),
-        )
-        if center_id:
-            query = query.filter(ServiceBooking.service_center_id == center_id)
-        
+        query = session.query(ServiceBooking).options(joinedload(ServiceBooking.vehicle), joinedload(ServiceBooking.owner))
+        if center_id: query = query.filter(ServiceBooking.service_center_id == center_id)
         bookings = query.order_by(ServiceBooking.created_at.desc()).all()
-
         results = []
         for b in bookings:
-            results.append(
-                {
-                    "ticket_id": b.ticket_id,
-                    "vehicle_id": b.chassis_number,
-                    "owner_name": b.owner.full_name if b.owner else (b.vehicle.owner.full_name if b.vehicle and b.vehicle.owner else "Unknown"),
-                    "issue": b.issue,
-                    "service_center": b.service_center_name,
-                    "center_id": b.service_center_id,
-                    "created_at": b.created_at.isoformat(),
-                }
-            )
+            results.append({
+                "ticket_id": b.ticket_id,
+                "vehicle_id": b.chassis_number,
+                "owner_name": b.owner.full_name if b.owner else (b.vehicle.owner.full_name if b.vehicle and b.vehicle.owner else "Unknown"),
+                "issue": b.issue,
+                "service_center": b.service_center_name,
+                "center_id": b.service_center_id,
+                "created_at": b.created_at.isoformat(),
+            })
         return results
