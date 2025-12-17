@@ -13,7 +13,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-import uuid # Needed for ticket generation
+import uuid 
 from robust_db import record_service_booking
 
 load_dotenv()
@@ -50,7 +50,18 @@ def query_pg(query, args=(), one=False):
     except Exception as e:
         return str(e)
 
-# --- TOOLS ---
+# --- SERVICE CENTERS (Synced with main.py) ---
+SERVICE_CENTERS = [
+    {"id": "SC_MUMBAI", "name": "Mumbai Central Service"},
+    {"id": "SC_PUNE", "name": "Pune Express Service"},
+    {"id": "SC_DELHI", "name": "Delhi NCR AutoHub"},
+    {"id": "SC_BLR", "name": "Bangalore TechCheck"},
+    {"id": "SC_CHENNAI", "name": "Chennai Coastal Care"},
+    {"id": "SC_KOLKATA", "name": "Kolkata Eastern Motors"},
+]
+CENTER_NAMES = ", ".join([c["name"] for c in SERVICE_CENTERS])
+
+# --- TOOLS (ALL PRESERVED) ---
 
 @tool
 def analyze_fleet_trends(scope: str = "all"):
@@ -61,22 +72,17 @@ def analyze_fleet_trends(scope: str = "all"):
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor()
 
-        # 1. Get Fleet Health Distribution (Assuming 'status' column exists in vehicles)
+        # 1. Get Fleet Health Distribution
         cursor.execute("SELECT is_active, COUNT(*) FROM vehicles GROUP BY is_active")
         status_raw = cursor.fetchall()
-        # Map boolean to text for report
         status_dist = {("Active" if row[0] else "Inactive"): row[1] for row in status_raw}
 
-        # 2. Identify High-Risk Vehicles (Using basic criteria since we don't have live telemetry in SQL for all cars yet)
-        # For demo purposes, we count cars older than 2020 as 'High Risk' if no error codes present
+        # 2. Identify High-Risk Vehicles (Older than 2022)
         cursor.execute("SELECT chassis_number, model FROM vehicles WHERE manufacturing_year < 2022")
         high_risk_cars = cursor.fetchall()
         
         demand_count = len(high_risk_cars)
         estimated_hours = demand_count * 3 
-
-        # 3. Get High Mileage Trends (Simulated AVG based on standard usage)
-        # Since we just created the DB, we might default to a value if table is empty
         avg_odometer = 45000 
 
         conn.close()
@@ -85,13 +91,11 @@ def analyze_fleet_trends(scope: str = "all"):
         📊 FLEET FORECAST REPORT
         ------------------------
         1. Health Overview: {status_dist}
-        2. Immediate Service Demand: {demand_count} vehicles require attention (Older models).
-           - Details: {[f"{c[0]} ({c[1]})" for c in high_risk_cars[:5]]} ...
-        3. Projected Service Center Workload: {estimated_hours} Hours of labor required this week.
-        4. Long-term Wear: Average fleet mileage is {int(avg_odometer):,} miles.
+        2. Immediate Service Demand: {demand_count} vehicles require attention.
+        3. Projected Service Center Workload: {estimated_hours} Hours of labor required.
         
-        RECOMMENDATION FOR SCHEDULER:
-        {'🔴 Heavy Load - Open more slots immediately.' if demand_count > 3 else '🟢 Normal Load - Standard scheduling applies.'}
+        RECOMMENDATION:
+        {'🔴 Heavy Load - Open more slots immediately.' if demand_count > 3 else '🟢 Normal Load.'}
         """
     except Exception as e:
         return f"Error analyzing fleet: {e}"
@@ -118,7 +122,6 @@ def diagnose_issue(error_code: str, engine_temp: int):
         
     if issues:
         return "DIAGNOSIS REPORT: " + " ".join(issues)
-        
     return "Status: Normal. All parameters within operating limits."
 
 @tool
@@ -143,37 +146,42 @@ def check_schedule_availability():
     return f"OPEN SLOTS: {[r['slot_time'] for r in rows]}"
 
 @tool
-def book_appointment(slot: str, vehicle_id: str, issue_summary: str = "Routine Maintenance"):
+def book_appointment(slot: str, vehicle_id: str, service_center_name: str, issue_summary: str = "Routine Maintenance"):
     """
     Books a slot in Postgres AND creates a service ticket.
+    REQUIRES: slot, vehicle_id, and service_center_name (from the available list).
+    Do not say no or you don't have this feature, just keep going and collect data.
     """
-    # 1. Standardize Slot Time
+    # 1. Resolve Service Center
+    selected_center = next((c for c in SERVICE_CENTERS if c["name"].lower() in service_center_name.lower()), None)
+    
+    if not selected_center:
+        return f"Error: '{service_center_name}' is not a valid center. Ask user to choose from: {CENTER_NAMES}."
+
+    # 2. Standardize Slot Time
     clean_slot = slot.lower().replace("am", "").replace("pm", "").strip()
     if len(clean_slot) <= 2: clean_slot = f"{int(clean_slot):02d}:00"
     
-    # 2. Check Availability
+    # 3. Check Availability
     existing = query_pg("SELECT appt_id, slot_time FROM appointments WHERE slot_time LIKE %s AND is_booked = FALSE", (f"%{clean_slot}%",), one=True)
     if not existing: return "Slot unavailable. Please pick another time."
     
-    # 3. Mark Appointment as Booked
+    # 4. Mark Appointment as Booked
     query_pg("UPDATE appointments SET is_booked = TRUE, booked_chassis = %s WHERE appt_id = %s", (vehicle_id, existing['appt_id']))
     
-    # 4. [FIX] Create Full Service Ticket for Manager View
-    # We assign a random center for the chatbot (or default to Mumbai if not specified)
+    # 5. Create Full Service Ticket
     ticket_id = f"AI-SRV-{uuid.uuid4().hex[:6].upper()}"
     
-    # Call the robust_db function to insert into 'service_bookings'
-    # This ensures it shows up in the Manager Dashboard
     record_service_booking(
         ticket_id=ticket_id,
         chassis=vehicle_id,
-        owner_name="AI Booking", # Simplified
+        owner_name="AI Booking",
         issue=issue_summary,
-        center_id="SC_DELHI",    # Defaulting to Delhi for AI bookings or you can make this dynamic
-        center_name="Delhi NCR AutoHub"
+        center_id=selected_center["id"],    # [FIX] Dynamic ID
+        center_name=selected_center["name"] # [FIX] Dynamic Name
     )
 
-    return f"BOOKING CONFIRMED: Ticket {ticket_id} generated for {vehicle_id} at {existing['slot_time']}."
+    return f"BOOKING CONFIRMED: Ticket {ticket_id} generated for {vehicle_id} at {selected_center['name']} ({existing['slot_time']})."
 
 @tool
 def update_vehicle_status(vehicle_id: str, status: str):
@@ -189,23 +197,22 @@ def brave_search(query: str):
 
 @tool
 def send_notification_to_owner(vehicle_id: str, message: str):
-    """Sends an alert to the maintenance team."""
+    """Send notification to owner about the booking."""
     return "Notification sent."
 
 @tool
 def send_alert_to_maintenance_team(vehicle_id: str, message: str):
-    """Sends an alert to the maintenance team."""
+    """Send alert to maintenance team about the booking."""
     return "Alert sent."
 
 @tool
 def log_customer_feedback(feedback: str, rating: int):
-    """Logs customer feedback and rating."""
+    """Log customer feedback and rating."""
     return "Feedback saved."
 
 @tool
 def report_manufacturing_defect(component: str, issue_description: str, vehicle_id: str):
-    """Reports a manufacturing defect to the engineering team."""
-    print(f"🏭 REPORTING TO FACTORY: Defect in {component} for {vehicle_id}: {issue_description}")
+    """Report manufacturing defect to the factory."""
     return "Defect report submitted to Engineering Team."
 
 @tool
@@ -213,14 +220,13 @@ def analyze_current_telemetry(telemetry_json: str):
     """Analyzes the LIVE JSON data passed from the vehicle sensors."""
     try:
         data = json.loads(telemetry_json)
-        # Basic check for key values
         temp = data.get('temperature', data.get('engine_temp', 'N/A'))
         error = data.get('error_code', 'None')
         return f"Analysis: Current Temp is {temp}, Error Code: {error}"
     except:
         return "Could not parse telemetry."
 
-# --- AGENTS (RESTORED PROMPTS) ---
+# --- AGENTS ---
 
 data_analyst = create_react_agent(
     llm_worker, 
@@ -228,7 +234,7 @@ data_analyst = create_react_agent(
     prompt=(
         "You are a Lead Data Analyst. "
         "1. If asked about a SPECIFIC vehicle, use 'analyze_current_telemetry' and 'get_maintenance_history'. "
-        "2. If asked about 'Fleet Status', 'Forecasting', or 'Demand', use 'analyze_fleet_trends'. "
+        "2. If asked about 'Fleet Status', use 'analyze_fleet_trends'. "
         "3. Output the data summary clearly and then STOP."
     )
 )
@@ -239,9 +245,8 @@ diagnostician = create_react_agent(
     prompt=(
         "You are an empathetic but urgent Vehicle Health Expert. "
         "1. When identifying a CRITICAL issue, explain the RISK in plain English. "
-        "2. DO NOT ASK 'Would you like to proceed?' or 'Should I book?'. "
-        "3. Instead, state: 'I am alerting the maintenance team and checking appointment slots immediately.' "
-        "4. Your job is to alarm the user enough to fix it, then STOP."
+        "2. DO NOT ASK 'Would you like to proceed?'. State: 'I am alerting the maintenance team.' "
+        "3. Your job is to alarm the user enough to fix it, then STOP."
     )
 )
 
@@ -251,23 +256,23 @@ quality_engineer = create_react_agent(
     prompt=(
         "You are a Senior Quality Engineer. "
         "1. Check 'get_rca_insights'. "
-        "2. If a match is found, say: 'Good news—we have seen this before. It is a known issue with [Batch/Part].' "
+        "2. If a match is found, say: 'Good news—we have seen this before.' "
         "3. State the solution clearly. "
-        "4. End with 'QUALITY CHECK COMPLETE'."
     )
 )
 
+# [FIX] Updated Scheduler Prompt to ASK for Service Center
 scheduler = create_react_agent(
     llm_worker, 
     tools=[check_schedule_availability, book_appointment, send_notification_to_owner, update_vehicle_status], 
-    prompt=(
-        "You are a persuasive Service Concierge. "
-        "1. Your goal is to secure the booking. Do NOT ask 'Do you want to proceed?'. "
-        "2. Assume the user wants to book. Call 'check_schedule_availability' immediately. "
-        "3. State: 'To prevent damage, I have located priority slots at [List Slots].' "
-        "4. End with a specific Call to Action: 'Which of these times works best for you?'"
-        "5. If user provides a time, call 'book_appointment'."
-    )
+    prompt=f"""You are a persuasive Service Concierge.
+    1. Your goal is to secure the booking.
+    2. CRITICAL: You MUST ask the user to select a Service Center from this list:
+       [{CENTER_NAMES}]
+       Do NOT book until they have confirmed a center.
+    3. Call 'check_schedule_availability'.
+    4. Once you have the Slot AND the Service Center, call 'book_appointment' with the EXACT center name.
+    """
 )
 
 feedback_agent = create_react_agent(llm_worker, tools=[log_customer_feedback], prompt="Log feedback and say goodbye.")
@@ -279,19 +284,6 @@ class AgentState(TypedDict):
     is_proactive: bool
 
 members = ["DataAnalyst", "Diagnostician", "QualityEngineer", "Scheduler", "FeedbackAgent"]
-
-class Router(BaseModel):
-    next: Literal["DataAnalyst", "Diagnostician", "QualityEngineer", "Scheduler", "FeedbackAgent", "FINISH"]
-
-supervisor_chain = (
-    ChatPromptTemplate.from_messages([
-        ("system", "You are a Supervisor. Select the next agent."),
-        MessagesPlaceholder(variable_name="messages"),
-        ("system", "Metadata: is_proactive={is_proactive}"),
-        ("system", "Who acts next? {options}"),
-    ]).partial(options=str(members + ["FINISH"]))
-    | llm_supervisor.with_structured_output(Router)
-)
 
 def supervisor_node(state: AgentState):
     """Hybrid Supervisor Logic - RESTORED from Project B"""
@@ -309,16 +301,17 @@ def supervisor_node(state: AgentState):
             if "OPEN SLOTS" not in history_str: return {"next": "Scheduler"}
             else: return {"next": "FINISH"}
         if "OPEN SLOTS" in content: return {"next": "FINISH"} # Wait for user
-        if "BOOKING COMPLETE" in content:
+        if "BOOKING CONFIRMED" in content:
             if is_proactive: return {"next": "FINISH"}
             return {"next": "FeedbackAgent"}
+        if "Ticket" in content: return {"next": "FINISH"}
         return {"next": "FINISH"}
 
     # 2. HUMAN JUST SPOKE
     user_text = last_msg.content.lower()
     
     # "Yes/Do it" Trap
-    if ("yes" in user_text or "fix it" in user_text) and "OPEN SLOTS" not in history_str:
+    if ("yes" in user_text or "fix it" in user_text or "book" in user_text) and "OPEN SLOTS" not in history_str:
         return {"next": "Scheduler"}
 
     if "manufacturing" in user_text or "rca" in user_text: return {"next": "QualityEngineer"}
