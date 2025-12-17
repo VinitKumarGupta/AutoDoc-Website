@@ -56,6 +56,10 @@ def authenticate_dealer(username, password) -> Optional[Dict]:
         user = session.query(User).filter(User.username == username).first()
         if not user or not verify_password(password, user.password_hash): return None
         
+        # [FIX] Enforce Role Check
+        if user.role != "ADMIN":  # In populate_data.py, HERO_DLR is 'ADMIN'
+            return None
+        
         dealer = session.query(Dealer).filter(Dealer.user_id == user.user_id).options(
             joinedload(Dealer.vehicles).joinedload(Vehicle.owner),
             joinedload(Dealer.user)
@@ -68,6 +72,10 @@ def authenticate_owner(username, password) -> Optional[Dict]:
     with session_scope() as session:
         user = session.query(User).filter(User.username == username).first()
         if not user or not verify_password(password, user.password_hash): return None
+        
+        # [FIX] Enforce Role Check
+        if user.role != "OWNER": # In populate_data.py, rahul is 'OWNER'
+            return None
         
         # Ensure vehicles are loaded
         session.query(Vehicle).filter(Vehicle.owner_id == user.user_id).all()

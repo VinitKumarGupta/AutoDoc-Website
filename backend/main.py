@@ -185,6 +185,27 @@ async def manager_bookings(center_id: Optional[str] = None):
 async def security_logs():
     return {"logs": SECURITY_LOGS[-200:]}
 
+@app.get("/alerts/active")
+async def get_active_alerts():
+    """
+    Fetches active alerts for all vehicles.
+    """
+    active_alerts = []
+    # Iterate over all vehicles we have history for
+    for vid in VEHICLE_HEALTH_HISTORY.keys():
+        alert = alert_service.get_alert_for_vehicle(vid)
+        if alert:
+            # Get latest telemetry for context
+            latest = VEHICLE_HEALTH_HISTORY[vid][-1]
+            active_alerts.append({
+                "vehicle_id": vid,
+                "predicted_failure_type": alert, 
+                "root_cause_sensor": latest.get("root_cause_sensor", "Unknown"),
+                "risk_score": latest.get("risk_score_numeric", 0)
+            })
+            
+    return {"alerts": active_alerts}
+
 @app.post("/toggle-attack/{status}")
 async def toggle_attack(status: bool):
     global ATTACK_MODE

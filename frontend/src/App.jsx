@@ -37,6 +37,36 @@ function App() {
     { id: "SC_NAVI", name: "Navi Mumbai AutoCare" },
   ]
 
+  const styles = {
+    card: {
+      background: 'var(--bg-card)',
+      padding: '1.5rem',
+      borderRadius: '12px',
+      border: '1px solid rgba(255, 255, 255, 0.05)',
+      marginTop: '20px'
+    },
+    input: {
+      padding: '10px',
+      borderRadius: '8px',
+      background: 'rgba(0,0,0,0.2)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      color: 'white',
+      width: '100%',
+      boxSizing: 'border-box'
+    },
+    table: { width: '100%', borderCollapse: 'collapse' },
+    th: { textAlign: 'left', padding: '10px', color: '#94a3b8', borderBottom: '1px solid #334155' },
+    td: { padding: '10px', borderBottom: '1px solid #334155' },
+    btn: {
+      padding: '8px 16px',
+      borderRadius: '6px',
+      border: 'none',
+      background: 'var(--primary)',
+      color: 'white',
+      cursor: 'pointer'
+    }
+  }
+
   // ================= API CALLS =================
 
   const handleLogin = async (e) => {
@@ -164,7 +194,7 @@ function App() {
         <form onSubmit={handleLogin} className="login-form">
           <div className="form-group">
             <label>Username</label>
-            <input value={loginUser} onChange={e=>setLoginUser(e.target.value)} placeholder="e.g. HERO_DLR" />
+            <input value={loginUser} onChange={e=>setLoginUser(e.target.value)} placeholder="Username" />
           </div>
           <div className="form-group">
             <label>Password</label>
@@ -287,7 +317,12 @@ function App() {
         )}
 
         <div style={{marginTop:'2rem'}}>
-           <ManagerBookings centerId={centerId} onCenterChange={setCenterId} serviceCenters={serviceCenters} />
+           <ManagerBookings 
+             centerId={centerId} 
+             onCenterChange={setCenterId} 
+             serviceCenters={serviceCenters} 
+             styles={styles} 
+           />
         </div>
 
         <div className="inventory-section" style={{marginTop:'2rem'}}>
@@ -412,7 +447,10 @@ function App() {
                 </div>
               ) : <p style={{padding:'20px'}}>📡 Connecting to vehicle telemetry...</p>}
               
-              <ChatbotWidget vehicleId={selectedCar?.chassis_number} />
+              <ChatbotWidget 
+                vehicleId={selectedCar?.chassis_number} 
+                styles={styles}
+              />
             </div>
           </div>
         )}
