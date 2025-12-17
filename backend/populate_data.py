@@ -23,7 +23,7 @@ DB_CONFIG = {
 # SQL SCHEMA
 SQL_SETUP = [
     """CREATE EXTENSION IF NOT EXISTS "pgcrypto";""",
-    """DROP TABLE IF EXISTS telemetry_stream CASCADE;""",
+    """DROP TABLE IF EXISTS service_bookings CASCADE;""",
     """DROP TABLE IF EXISTS maintenance_history CASCADE;""",
     """DROP TABLE IF EXISTS capa_records CASCADE;""",
     """DROP TABLE IF EXISTS appointments CASCADE;""",
@@ -46,7 +46,8 @@ SQL_SETUP = [
         dealer_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id UUID UNIQUE REFERENCES users(user_id) ON DELETE CASCADE,
         location VARCHAR(100),
-        contact VARCHAR(30)
+        contact VARCHAR(30),
+        brand VARCHAR(50) -- [NEW] Brand Exclusivity
     );""",
 
     """CREATE TABLE vehicles (
@@ -63,26 +64,74 @@ SQL_SETUP = [
         fuel_type VARCHAR(20)
     );""",
     
-    # ... (Keeping other tables simple for brevity, assumed standard) ...
-    """CREATE TABLE telemetry_stream (event_id BIGSERIAL PRIMARY KEY, chassis_number VARCHAR(50), timestamp TIMESTAMP, speed_kmh DECIMAL, sensor_data JSONB);""",
+    """CREATE TABLE service_bookings (
+        booking_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        ticket_id VARCHAR(30) UNIQUE NOT NULL,
+        chassis_number VARCHAR(50) REFERENCES vehicles(chassis_number) ON DELETE CASCADE,
+        owner_id UUID REFERENCES users(user_id),
+        dealer_id UUID REFERENCES dealers(dealer_id),
+        service_center_id VARCHAR(50),
+        service_center_name VARCHAR(100),
+        issue TEXT,
+        status VARCHAR(20) DEFAULT 'OPEN',
+        created_at TIMESTAMP DEFAULT NOW()
+    );""",
+
     """CREATE TABLE maintenance_history (history_id SERIAL PRIMARY KEY, chassis_number VARCHAR(50), service_date DATE, service_type VARCHAR(100), description TEXT, cost DECIMAL);""",
     """CREATE TABLE capa_records (capa_id SERIAL PRIMARY KEY, component VARCHAR(100), defect_type VARCHAR(100), action_required TEXT, batch_id VARCHAR(50));""",
     """CREATE TABLE appointments (appt_id SERIAL PRIMARY KEY, slot_time VARCHAR(20), is_booked BOOLEAN DEFAULT FALSE, booked_chassis VARCHAR(50));"""
 ]
 
-# SEED DATA
-# 1. Dealer (HERO_DLR / admin)
-DEALER_USER = ("HERO_DLR", "Hero MotoCorp Delhi", "ADMIN", "hero@auto.local", hash_password("admin"), "8391821234")
+# --- SEED DATA ---
 
-# 2. Owner (rahul / 123)
-OWNER_USER = ("rahul", "Rahul Sharma", "OWNER", "rahul@gmail.com", hash_password("123"), "9876543210")
+# 1. Dealers
+DEALERS = [
+    # (Username, Name, Role, Email, Pass, Phone, Location, Contact, Brand)
+    ("HERO_DLR", "Hero MotoCorp Ltd.", "ADMIN", "hero@auto.local", "admin", "9800011111", "Delhi, NCR", "011-234567", "Hero"),
+    ("MAH_DLR", "Mahindra & Mahindra Limited", "ADMIN", "mahindra@auto.local", "admin", "9800022222", "Mumbai, MH", "022-456789", "Mahindra")
+]
 
+# 2. Users (Owners)
+USERS = [
+    ("rahul", "Rahul Sharma", "OWNER", "rahul@gmail.com", "123", "9998887771"),
+    ("priya", "Priya Singh", "OWNER", "priya@yahoo.com", "123", "9998887772"),
+    ("amit", "Amit Verma", "OWNER", "amit@outlook.com", "123", "9998887773"),
+    ("sneha", "Sneha Kapoor", "OWNER", "sneha@gmail.com", "123", "9998887774"),
+    ("vikram", "Vikram Malhotra", "OWNER", "vikram@tech.local", "123", "9998887775"),
+]
+
+# 3. Vehicles (Chassis, DealerUser, OwnerUser, Model, Category, Fuel)
+# Note: Make is inferred from Dealer
 VEHICLES = [
-    # Unassigned Stock
-    {"chassis": "VIN-10001-XA", "make": "Hero", "model": "Splendor Plus", "cat": "2W", "fuel": "PETROL", "owner": None},
-    {"chassis": "VIN-10004-XD", "make": "Mahindra", "model": "Blazo", "cat": "HV", "fuel": "DIESEL", "owner": None},
-    # Assigned to Rahul
-    {"chassis": "VIN-10002-XB", "make": "Hero", "model": "Vida Nex 3", "cat": "EV", "fuel": "EV", "owner": "rahul"},
+    # --- RAHUL'S GARAGE (3 Vehicles: 1 Bike, 2 Cars) ---
+    {"chassis": "HERO-SPL-001", "dlr": "HERO_DLR", "owner": "rahul", "model": "Splendor Plus", "cat": "2W", "fuel": "PETROL"},
+    {"chassis": "MAH-XUV-101", "dlr": "MAH_DLR", "owner": "rahul",  "model": "XUV700 AX7", "cat": "4W", "fuel": "PETROL"},
+    {"chassis": "MAH-BE6-104", "dlr": "MAH_DLR", "owner": "rahul",  "model": "BE 6e", "cat": "EV", "fuel": "EV"},
+
+    # --- PRIYA'S GARAGE (2 Vehicles: 2 Scooters) ---
+    {"chassis": "HERO-VID-002", "dlr": "HERO_DLR", "owner": "priya", "model": "Vida V1 Pro", "cat": "EV", "fuel": "EV"},
+    {"chassis": "HERO-PLE-005", "dlr": "HERO_DLR", "owner": "priya", "model": "Pleasure Plus", "cat": "2W", "fuel": "PETROL"},
+
+    # --- AMIT'S GARAGE (3 Vehicles: 1 Bike, 2 SUVs) ---
+    {"chassis": "HERO-MAV-004", "dlr": "HERO_DLR", "owner": "amit",   "model": "Mavrick 440", "cat": "2W", "fuel": "PETROL"},
+    {"chassis": "MAH-XUV-105", "dlr": "MAH_DLR", "owner": "amit",     "model": "XUV 3XO", "cat": "4W", "fuel": "PETROL"},
+    {"chassis": "MAH-THAR-107", "dlr": "MAH_DLR", "owner": "amit",    "model": "Thar Earth Edit", "cat": "4W", "fuel": "DIESEL"},
+
+    # --- SNEHA'S GARAGE (2 Vehicles: 1 Off-road, 1 Bike) ---
+    {"chassis": "MAH-THR-102", "dlr": "MAH_DLR", "owner": "sneha",  "model": "Thar Roxx", "cat": "4W", "fuel": "DIESEL"},
+    {"chassis": "HERO-XPL-003", "dlr": "HERO_DLR", "owner": "sneha", "model": "Xpulse 200", "cat": "2W", "fuel": "PETROL"},
+
+    # --- VIKRAM'S GARAGE (4 Vehicles: Collector!) ---
+    {"chassis": "MAH-SCO-103", "dlr": "MAH_DLR", "owner": "vikram", "model": "Scorpio N", "cat": "4W", "fuel": "DIESEL"},
+    {"chassis": "MAH-BOL-106", "dlr": "MAH_DLR", "owner": "vikram", "model": "Bolero Neo", "cat": "4W", "fuel": "DIESEL"},
+    {"chassis": "HERO-KAR-006", "dlr": "HERO_DLR", "owner": "vikram", "model": "Karizma XMR", "cat": "2W", "fuel": "PETROL"},
+    {"chassis": "HERO-VID-009", "dlr": "HERO_DLR", "owner": "vikram", "model": "Vida V1 Plus", "cat": "EV", "fuel": "EV"},
+
+    # --- UNSOLD STOCK (For Dealer Demo) ---
+    {"chassis": "HERO-SPL-007", "dlr": "HERO_DLR", "owner": None,   "model": "Splendor Pro", "cat": "2W", "fuel": "PETROL"},
+    {"chassis": "HERO-DEST-008", "dlr": "HERO_DLR", "owner": None,  "model": "Destini 125", "cat": "2W", "fuel": "PETROL"},
+    {"chassis": "MAH-XUV-108", "dlr": "MAH_DLR", "owner": None,     "model": "XUV 400 EV", "cat": "4W", "fuel": "EV"},
+    {"chassis": "MAH-SCN-109", "dlr": "MAH_DLR", "owner": None,     "model": "Scorpio Classic", "cat": "4W", "fuel": "DIESEL"},
 ]
 
 def run_setup():
@@ -90,39 +139,62 @@ def run_setup():
         conn = psycopg2.connect(**DB_CONFIG)
         conn.autocommit = True
         cur = conn.cursor()
-        print("🚀 Setting up DB...")
+        print("🚀 Setting up DB with Rich Data...")
 
+        # 1. Run Schema
         for sql in SQL_SETUP: cur.execute(sql)
 
-        # 1. Create Dealer
-        cur.execute("INSERT INTO users (username, full_name, role, email, password_hash, phone) VALUES (%s, %s, %s, %s, %s, %s)", DEALER_USER)
-        cur.execute("SELECT user_id FROM users WHERE username=%s", (DEALER_USER[0],))
-        dealer_user_id = cur.fetchone()[0]
-        cur.execute("INSERT INTO dealers (user_id, location, contact) VALUES (%s, 'Delhi', '8391821234')", (dealer_user_id,))
-        cur.execute("SELECT dealer_id FROM dealers WHERE user_id=%s", (dealer_user_id,))
-        dealer_id = cur.fetchone()[0]
+        dealer_map = {} # username -> dealer_id
+        user_map = {}   # username -> user_id
 
-        # 2. Create Owner (Rahul)
-        cur.execute("INSERT INTO users (username, full_name, role, email, password_hash, phone) VALUES (%s, %s, %s, %s, %s, %s)", OWNER_USER)
-        cur.execute("SELECT user_id FROM users WHERE username=%s", (OWNER_USER[0],))
-        rahul_id = cur.fetchone()[0]
+        # 2. Insert Dealers
+        for d in DEALERS:
+            # Create User entry for Dealer
+            cur.execute(
+                "INSERT INTO users (username, full_name, role, email, password_hash, phone) VALUES (%s, %s, %s, %s, %s, %s) RETURNING user_id", 
+                (d[0], d[1], d[2], d[3], hash_password(d[4]), d[5])
+            )
+            u_id = cur.fetchone()[0]
+            
+            # Create Dealer entry
+            cur.execute(
+                "INSERT INTO dealers (user_id, location, contact, brand) VALUES (%s, %s, %s, %s) RETURNING dealer_id",
+                (u_id, d[6], d[7], d[8])
+            )
+            d_id = cur.fetchone()[0]
+            dealer_map[d[0]] = (d_id, d[8]) # Store ID and Brand
+            print(f"✅ Created Dealer: {d[1]} ({d[8]})")
 
-        # 3. Vehicles
+        # 3. Insert Users
+        for u in USERS:
+            cur.execute(
+                "INSERT INTO users (username, full_name, role, email, password_hash, phone) VALUES (%s, %s, %s, %s, %s, %s) RETURNING user_id",
+                (u[0], u[1], u[2], u[3], hash_password(u[4]), u[5])
+            )
+            user_map[u[0]] = cur.fetchone()[0]
+            print(f"👤 Created User: {u[1]}")
+
+        # 4. Insert Vehicles
         for v in VEHICLES:
-            owner_uuid = rahul_id if v["owner"] == "rahul" else None
-            sale_date = "NOW()" if owner_uuid else "NULL"
+            dlr_id, brand = dealer_map[v["dlr"]]
+            own_id = user_map[v["owner"]] if v["owner"] else None
+            sale_date = "NOW()" if own_id else "NULL"
+            
+            # Note: We use the Dealer's brand for the Vehicle Make
             cur.execute(f"""
                 INSERT INTO vehicles (chassis_number, dealer_id, owner_id, make, model, category, fuel_type, manufacturing_year, sale_date)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, 2024, {sale_date})
-            """, (v["chassis"], dealer_id, owner_uuid, v["make"], v["model"], v["cat"], v["fuel"]))
+            """, (v["chassis"], dlr_id, own_id, brand, v["model"], v["cat"], v["fuel"]))
+        
+        print(f"🚗 Added {len(VEHICLES)} Vehicles.")
 
-        # 4. History/Slots
-        cur.execute("INSERT INTO maintenance_history (chassis_number, service_date, service_type, description, cost) VALUES (%s, '2024-01-15', 'Checkup', 'Routine', 500)", ("VIN-10002-XB",))
-        for s in ["09:00", "10:00", "14:00"]: cur.execute("INSERT INTO appointments (slot_time) VALUES (%s)", (s,))
-
-        print("✅ Database Reset!")
+        # 5. Add some history
+        cur.execute("INSERT INTO appointments (slot_time) VALUES ('09:00'), ('10:00'), ('11:00'), ('14:00'), ('15:00')")
+        
+        print("✅ Database Reset Complete!")
         conn.close()
-    except Exception as e: print(e)
+    except Exception as e: 
+        print(f"❌ Error: {e}")
 
 if __name__ == "__main__":
     run_setup()

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import ManagerBookings from './ManagerBookings'
 import ChatbotWidget from './ChatbotWidget'
-import './App.css' // Ensures the new styles are applied
+import './App.css'
 
 function App() {
   // --- AUTH STATE ---
@@ -10,7 +10,7 @@ function App() {
   const [role, setRole] = useState(null)
   
   // Login Form Inputs
-  const [loginUser, setLoginUser] = useState() // Updated default
+  const [loginUser, setLoginUser] = useState()
   const [loginPass, setLoginPass] = useState()
   const [loginRole, setLoginRole] = useState("dealer")
   const [authError, setAuthError] = useState("")
@@ -19,8 +19,11 @@ function App() {
   // --- DEALER STATE ---
   const [activeTab, setActiveTab] = useState("inventory")
   const [newVin, setNewVin] = useState("")
-  const [newModel, setNewModel] = useState("Tata Nexon EV")
-  const [assignTarget, setAssignTarget] = useState("rahul")
+  const [newModel, setNewModel] = useState("")
+  
+  // [FIX 1] Change State to an Object to handle multiple inputs independently
+  // Structure: { "VIN-123": "username1", "VIN-456": "username2" }
+  const [assignTargets, setAssignTargets] = useState({}) 
 
   // --- USER STATE ---
   const [selectedCar, setSelectedCar] = useState(null)
@@ -31,11 +34,19 @@ function App() {
   const [securityLogs, setSecurityLogs] = useState([])
   const socketRef = useRef(null)
 
-  const serviceCenters = [
-    { id: "SC_MUMBAI", name: "Mumbai Central Service" },
-    { id: "SC_PUNE", name: "Pune Express Service" },
-    { id: "SC_NAVI", name: "Navi Mumbai AutoCare" },
+  const SERVICE_CENTERS = [
+    {"id": "SC_MUMBAI", "name": "Mumbai Central Service", "lat": 19.0760, "lon": 72.8777, "manager": "mumbai.manager@svc.local"},
+    {"id": "SC_PUNE", "name": "Pune Express Service", "lat": 18.5204, "lon": 73.8567, "manager": "pune.manager@svc.local"},
+    {"id": "SC_DELHI", "name": "Delhi NCR AutoHub", "lat": 28.7041, "lon": 77.1025, "manager": "delhi.manager@svc.local"},
+    {"id": "SC_BLR", "name": "Bangalore TechCheck", "lat": 12.9716, "lon": 77.5946, "manager": "blr.manager@svc.local"},
+    {"id": "SC_CHENNAI", "name": "Chennai Coastal Care", "lat": 13.0827, "lon": 80.2707, "manager": "chennai.manager@svc.local"},
+    {"id": "SC_KOLKATA", "name": "Kolkata Eastern Motors", "lat": 22.5726, "lon": 88.3639, "manager": "kolkata.manager@svc.local"},
   ]
+
+  // [HELPER] Determine styling/placeholders based on Dealer Brand
+  const isHero = (session?.brand || session?.username || '').toUpperCase().includes('HERO');
+  const vinPlaceholder = isHero ? "e.g. HERO-MVR-205" : "e.g. MAH-XUV-705";
+  const modelPlaceholder = isHero ? "e.g. Mavrick 440" : "e.g. XUV 7XO";
 
   const styles = {
     card: {
@@ -74,7 +85,6 @@ function App() {
     setAuthError("")
     setLoading(true)
     try {
-      // Note: Backend port 8000 based on your previous config
       const res = await axios.post("http://localhost:8000/login", {
         username: loginUser, password: loginPass, role: loginRole
       })
@@ -95,30 +105,37 @@ function App() {
     if(!newVin) return alert("Enter VIN")
     try {
       const res = await axios.post("http://localhost:8000/dealer/add-stock", {
-        dealer_id: session.dealer_id, // Updated to match DB response
-        chassis_number: newVin,       // Updated to match backend key
+        dealer_id: session.dealer_id,
+        chassis_number: newVin,
         model: newModel
       })
-      // Refresh session logic or append locally
       alert("Stock Added!")
-      // In a real app, we'd refetch dealer data here
     } catch (e) { alert("Error adding stock") }
   }
 
+  // [FIX 1] Updated assignCar to read from the object state
   const assignCar = async (vin) => {
+    const targetUser = assignTargets[vin]; // Get specific input for this car
+
+    if (!targetUser) return alert("Please enter a username to sell to.");
+
     try {
       const res = await axios.post("http://localhost:8000/dealer/assign", {
         dealer_id: session.dealer_id, 
         chassis_number: vin, 
-        target_username: assignTarget
+        target_username: targetUser
       })
-      // Update inventory locally for immediate feedback
+      
       setSession(prev => ({
         ...prev, 
         inventory: res.data.inventory, 
         sold_vehicles: res.data.sold
       }))
-      alert(`Assigned ${vin} to ${assignTarget}`)
+      
+      // Clear the input for this specific car after success
+      setAssignTargets(prev => ({...prev, [vin]: ""})) 
+      
+      alert(`Assigned ${vin} to ${targetUser}`)
     } catch (e) { alert("Assignment Failed (User exists?)") }
   }
 
@@ -150,7 +167,6 @@ function App() {
   // ================= WEBSOCKET =================
   useEffect(() => {
     if (role !== "user" || !selectedCar) return;
-    // Connecting to Backend Port 8000
     const ws = new WebSocket(`ws://localhost:8000/ws/1?vehicle_id=${selectedCar.chassis_number}&role=user`)
     ws.onmessage = (e) => setTelemetry(JSON.parse(e.data))
     socketRef.current = ws
@@ -169,7 +185,7 @@ function App() {
   }, [role])
 
 
-  // ================= VIEW: LOGIN (Stylized) =================
+  // ================= VIEW: LOGIN =================
   if (!session) return (
     <div className="login-wrapper">
       <div className="login-card">
@@ -194,11 +210,11 @@ function App() {
         <form onSubmit={handleLogin} className="login-form">
           <div className="form-group">
             <label>Username</label>
-            <input value={loginUser} onChange={e=>setLoginUser(e.target.value)} placeholder="Username" />
+            <input value={loginUser} onChange={e=>setLoginUser(e.target.value)} placeholder="Enter Username" />
           </div>
           <div className="form-group">
             <label>Password</label>
-            <input type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} placeholder="Password" />
+            <input type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} placeholder="Enter Password" />
           </div>
           
           {authError && <div className="error-message">{authError}</div>}
@@ -209,8 +225,7 @@ function App() {
         </form>
         
         <div className="login-footer">
-          <p>Demo Dealer: <strong>HERO_DLR</strong> / <strong>admin</strong></p>
-          <p>Demo Owner: <strong>rahul</strong> / <strong>123</strong></p>
+          <p>Note:<br></br>Password for Dealers: <strong>admin</strong><br></br>Password for Owners: <strong>123</strong></p>
         </div>
       </div>
     </div>
@@ -258,46 +273,72 @@ function App() {
         </div>
 
         {activeTab === 'inventory' && (
-          <div className="inventory-section">
-            <h3>Add New Vehicle Stock</h3>
-            <div style={{display:'flex', gap:'10px', marginBottom:'20px', alignItems:'end'}}>
-              <div className="form-group" style={{marginBottom:0}}>
-                <label>VIN</label>
-                <input value={newVin} onChange={e=>setNewVin(e.target.value)} placeholder="e.g. MH-101" />
-              </div>
-              <div className="form-group" style={{marginBottom:0}}>
-                <label>Model</label>
-                <select style={{padding:'12px', borderRadius:'8px', background:'rgba(0,0,0,0.2)', color:'white', border:'1px solid rgba(255,255,255,0.1)'}} value={newModel} onChange={e=>setNewModel(e.target.value)}>
-                  <option>Tata Nexon EV</option>
-                  <option>Hero Splendor</option>
-                  <option>Mahindra Thar</option>
-                </select>
-              </div>
-              <button className="login-btn" style={{width:'auto', background:'var(--success)'}} onClick={addStock}>+ ADD</button>
+        <div className="inventory-section">
+          <h3>Add New Vehicle Stock</h3>
+          <div style={{display:'flex', gap:'10px', marginBottom:'20px', alignItems:'end'}}>
+            <div className="form-group" style={{marginBottom:0, flex:1}}>
+              <label>VIN (Chassis Number)</label>
+              <input 
+                style={styles.input}
+                value={newVin} 
+                onChange={e=>setNewVin(e.target.value)} 
+                placeholder={vinPlaceholder} 
+              />
             </div>
-
-            <h3>Available Inventory</h3>
-            <table>
-              <thead><tr><th>VIN</th><th>Model</th><th>Action</th></tr></thead>
-              <tbody>
-                {(session.inventory || []).map(car => (
-                  <tr key={car.chassis_number}>
-                    <td>{car.chassis_number}</td>
-                    <td>{car.model}</td>
-                    <td>
-                      <div style={{display:'flex', gap:'10px'}}>
-                        <input placeholder="Username" style={{padding:'5px', background:'transparent', border:'1px solid #555', color:'white'}} value={assignTarget} onChange={e=>setAssignTarget(e.target.value)} />
-                        <button className="badge success" style={{border:'none', cursor:'pointer'}} onClick={()=>assignCar(car.chassis_number)}>SELL</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="form-group" style={{marginBottom:0, flex:1}}>
+              <label>Model Name</label>
+              <input 
+                  style={styles.input} 
+                  value={newModel} 
+                  onChange={e=>setNewModel(e.target.value)} 
+                  placeholder={modelPlaceholder}
+              />
+            </div>
+            <button className="login-btn" style={{width:'auto', background:'var(--success)', height:'42px'}} onClick={addStock}>
+              + ADD STOCK
+            </button>
           </div>
-        )}
 
-        {activeTab === 'sold' && (
+          <h3>Available Inventory</h3>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                  <th style={styles.th}>VIN</th>
+                  <th style={styles.th}>Model</th>
+                  <th style={styles.th}>Buyer Username</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(session.inventory || []).map(car => (
+                <tr key={car.chassis_number}>
+                  <td style={styles.td}>{car.chassis_number}</td>
+                  <td style={styles.td}>{car.model}</td>
+                  <td style={styles.td}>
+                    <div style={{display:'flex', gap:'10px'}}>
+                      {/* [FIX 1] Independent Input for each row */}
+                      <input 
+                          placeholder="Enter Username" 
+                          style={{...styles.input, padding:'5px', fontSize:'0.9em'}} 
+                          value={assignTargets[car.chassis_number] || ""} 
+                          onChange={e => setAssignTargets({
+                              ...assignTargets, 
+                              [car.chassis_number]: e.target.value
+                          })} 
+                      />
+                      <button className="badge success" style={{border:'none', cursor:'pointer'}} onClick={()=>assignCar(car.chassis_number)}>
+                          SELL
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      
+      {/* ... Rest of Dealer View (Sales History, etc.) ... */}
+      {activeTab === 'sold' && (
           <div className="inventory-section">
             <h3>Sales History</h3>
             <table>
@@ -320,7 +361,7 @@ function App() {
            <ManagerBookings 
              centerId={centerId} 
              onCenterChange={setCenterId} 
-             serviceCenters={serviceCenters} 
+             serviceCenters={SERVICE_CENTERS} 
              styles={styles} 
            />
         </div>
@@ -348,6 +389,7 @@ function App() {
   // ================= VIEW: USER DASHBOARD =================
   return (
     <div className="dashboard-container">
+      {/* ... (Header and Stats) ... */}
       <header className="dashboard-header">
         <h2>My <span className="highlight">Garage</span></h2>
         <div style={{display:'flex', alignItems:'center', gap:'15px'}}>
@@ -386,10 +428,15 @@ function App() {
             <div style={{flex:1}}>
               {telemetry ? (
                 <div className="stat-card" style={{borderTop: '4px solid var(--primary)'}}>
+                   {/* ... (Telemetry Grid) ... */}
                    <div style={{display:'flex', justifyContent:'space-between', marginBottom:'20px'}}>
-                      <h2>Live Monitor: {selectedCar.model}</h2>
-                      <div className="badge" style={{fontSize:'1rem', background: telemetry.risk_score_numeric > 0.8 ? 'var(--danger)' : 'var(--success)'}}>
-                        Risk: {telemetry.risk_score_numeric}
+                      <div>
+                        <h2 className="monitor-label">Live Monitor</h2>
+                        <div className="monitor-vehicle-title">{selectedCar.model}</div>
+                      </div>
+                      <div className={`risk-score ${telemetry.risk_score_numeric > 0.8 ? 'danger' : 'safe'}`}>
+                          {telemetry.risk_score_numeric > 0.8 && <span style={{fontSize:'1.2em'}}>⚠️</span>}
+                          <span>Risk: {telemetry.risk_score_numeric}</span>
                       </div>
                    </div>
                    
@@ -408,7 +455,6 @@ function App() {
                       </div>
                    </div>
 
-                   {/* UEBA STATUS */}
                    {telemetry.ueba && (
                      <div style={{marginTop:'15px', padding:'15px', background:'rgba(255,255,255,0.05)', borderRadius:'8px'}}>
                        <div style={{fontWeight:'bold', color:'var(--primary)'}}>🛡️ Data Integrity Check</div>
@@ -416,11 +462,10 @@ function App() {
                      </div>
                    )}
 
-                   {/* EXTENDED TELEMETRY */}
                    <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(120px, 1fr))', gap:'10px', marginTop:'20px'}}>
-                      <div className="badge">Oil Quality: {telemetry.oil_quality_contaminants_V_oil}</div>
-                      <div className="badge">Battery: {telemetry.battery_soh_percent}%</div>
-                      <div className="badge">Brake Wear: {telemetry.brake_pad_wear_percent}%</div>
+                      <div className="badge">Oil Quality <br></br>{telemetry.oil_quality_contaminants_V_oil}</div>
+                      <div className="badge">Battery <br></br>{telemetry.battery_soh_percent}%</div>
+                      <div className="badge">Brake Wear <br></br>{telemetry.brake_pad_wear_percent}%</div>
                    </div>
 
                    {/* ALERT & BOOKING */}
@@ -430,17 +475,23 @@ function App() {
                         <p>Recommended Action: Check {telemetry.root_cause_sensor}</p>
                         
                         <div style={{marginTop:'15px', display:'flex', gap:'10px', alignItems:'center'}}>
-                           <select style={{padding:'10px', borderRadius:'6px'}} value={centerId} onChange={e=>setCenterId(e.target.value)}>
-                              {serviceCenters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                           </select>
-                           
-                           {ticket ? (
-                             <div className="badge success">✅ Booked! Ticket: {ticket}</div>
-                           ) : (
-                             <button onClick={bookService} className="login-btn" style={{width:'auto', background:'var(--danger)'}}>
-                               BOOK REPAIR
-                             </button>
-                           )}
+                          
+                          {/* [FIX 2] Variable Name Mismatch Corrected: SERVICE_CENTERS */}
+                          <select 
+                              style={{...styles.input, width:'auto', cursor:'pointer', background:'var(--bg-card)'}} 
+                              value={centerId} 
+                              onChange={e=>setCenterId(e.target.value)}
+                          >
+                              {SERVICE_CENTERS.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                          
+                          {ticket ? (
+                            <div className="badge success">✅ Booked! Ticket: {ticket}</div>
+                          ) : (
+                            <button onClick={bookService} className="login-btn" style={{width:'auto', background:'var(--danger)'}}>
+                              BOOK REPAIR
+                            </button>
+                          )}
                         </div>
                      </div>
                    )}

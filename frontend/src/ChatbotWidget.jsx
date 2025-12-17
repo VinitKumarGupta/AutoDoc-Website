@@ -174,7 +174,7 @@ export default function ChatbotWidget({ vehicleId, styles = {} }) {
             value={input} 
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && ask()}
-            placeholder={vehicleId ? "Ask about your car..." : "Select a car to begin"}
+            placeholder={vehicleId ? "Ask about your vehicle..." : "Select a vehicle to begin"}
             disabled={loading}
         />
         <button style={s.btn} onClick={() => ask()} disabled={loading}>

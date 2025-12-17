@@ -13,6 +13,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
+import uuid # Needed for ticket generation
+from robust_db import record_service_booking
+
 load_dotenv()
 
 # --- CONFIG ---
@@ -140,16 +143,37 @@ def check_schedule_availability():
     return f"OPEN SLOTS: {[r['slot_time'] for r in rows]}"
 
 @tool
-def book_appointment(slot: str, vehicle_id: str):
-    """Books a slot in Postgres."""
+def book_appointment(slot: str, vehicle_id: str, issue_summary: str = "Routine Maintenance"):
+    """
+    Books a slot in Postgres AND creates a service ticket.
+    """
+    # 1. Standardize Slot Time
     clean_slot = slot.lower().replace("am", "").replace("pm", "").strip()
     if len(clean_slot) <= 2: clean_slot = f"{int(clean_slot):02d}:00"
     
+    # 2. Check Availability
     existing = query_pg("SELECT appt_id, slot_time FROM appointments WHERE slot_time LIKE %s AND is_booked = FALSE", (f"%{clean_slot}%",), one=True)
     if not existing: return "Slot unavailable. Please pick another time."
     
+    # 3. Mark Appointment as Booked
     query_pg("UPDATE appointments SET is_booked = TRUE, booked_chassis = %s WHERE appt_id = %s", (vehicle_id, existing['appt_id']))
-    return f"BOOKING COMPLETE: {vehicle_id} scheduled for {existing['slot_time']}."
+    
+    # 4. [FIX] Create Full Service Ticket for Manager View
+    # We assign a random center for the chatbot (or default to Mumbai if not specified)
+    ticket_id = f"AI-SRV-{uuid.uuid4().hex[:6].upper()}"
+    
+    # Call the robust_db function to insert into 'service_bookings'
+    # This ensures it shows up in the Manager Dashboard
+    record_service_booking(
+        ticket_id=ticket_id,
+        chassis=vehicle_id,
+        owner_name="AI Booking", # Simplified
+        issue=issue_summary,
+        center_id="SC_DELHI",    # Defaulting to Delhi for AI bookings or you can make this dynamic
+        center_name="Delhi NCR AutoHub"
+    )
+
+    return f"BOOKING CONFIRMED: Ticket {ticket_id} generated for {vehicle_id} at {existing['slot_time']}."
 
 @tool
 def update_vehicle_status(vehicle_id: str, status: str):

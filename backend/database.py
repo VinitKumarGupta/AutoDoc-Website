@@ -72,6 +72,8 @@ class Dealer(Base):
     user_id = Column(GUID(), ForeignKey("users.user_id", ondelete="CASCADE"), unique=True)
     location = Column(String(100))
     contact = Column(String(30))
+    # Enforce Brand Exclusivity
+    brand = Column(String(50), nullable=True)
     user = relationship("User", back_populates="dealer")
     vehicles = relationship("Vehicle", back_populates="dealer", foreign_keys="Vehicle.dealer_id")
 

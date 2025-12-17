@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 
+# RUN: python -m uvicorn main:app --reload --port 8000
+
 # --- DATABASE & AUTH ---
 from robust_db import (
     add_stock,
@@ -46,7 +48,10 @@ UEBA_CACHE: Dict[str, Dict[str, Any]] = {}
 SERVICE_CENTERS = [
     {"id": "SC_MUMBAI", "name": "Mumbai Central Service", "lat": 19.0760, "lon": 72.8777, "manager": "mumbai.manager@svc.local"},
     {"id": "SC_PUNE", "name": "Pune Express Service", "lat": 18.5204, "lon": 73.8567, "manager": "pune.manager@svc.local"},
-    {"id": "SC_NAVI", "name": "Navi Mumbai AutoCare", "lat": 19.0330, "lon": 73.0297, "manager": "navi.manager@svc.local"},
+    {"id": "SC_DELHI", "name": "Delhi NCR AutoHub", "lat": 28.7041, "lon": 77.1025, "manager": "delhi.manager@svc.local"},
+    {"id": "SC_BLR", "name": "Bangalore TechCheck", "lat": 12.9716, "lon": 77.5946, "manager": "blr.manager@svc.local"},
+    {"id": "SC_CHENNAI", "name": "Chennai Coastal Care", "lat": 13.0827, "lon": 80.2707, "manager": "chennai.manager@svc.local"},
+    {"id": "SC_KOLKATA", "name": "Kolkata Eastern Motors", "lat": 22.5726, "lon": 88.3639, "manager": "kolkata.manager@svc.local"},
 ]
 
 # --- MODELS ---

@@ -28,9 +28,10 @@ def _serialize_dealer(dealer: Dealer) -> Dict:
             })
 
     return {
-        "dealer_id": str(dealer.dealer_id), # --- FIX: API calls need this UUID
+        "dealer_id": str(dealer.dealer_id),
         "username": dealer.user.username,
-        "full_name": dealer.user.full_name, # --- FIX: Header needs 'full_name'
+        "full_name": dealer.user.full_name,
+        "brand": dealer.brand, # Return brand info
         "inventory": inventory,
         "sold_vehicles": sold,
     }
@@ -83,15 +84,25 @@ def authenticate_owner(username, password) -> Optional[Dict]:
 
 def add_stock(dealer_id_or_user, chassis_number, model):
     with session_scope() as session:
-        if session.query(Vehicle).filter_by(chassis_number=chassis_number).first(): return False
+        # Check if vehicle exists
+        if session.query(Vehicle).filter_by(chassis_number=chassis_number).first(): 
+            return False
         
-        # Determine dealer_id (handle if UUID string passed)
+        # 1. Fetch Dealer to get their Brand
+        dealer = session.query(Dealer).filter(Dealer.dealer_id == dealer_id_or_user).first()
+        if not dealer:
+            return False
+            
+        # 2. Enforce Brand Exclusivity
+        # The vehicle make is FORCED to be the Dealer's brand
+        vehicle_make = dealer.brand if dealer.brand else "Generic"
+        
         v = Vehicle(
             chassis_number=chassis_number,
             dealer_id=dealer_id_or_user, 
             model=model,
-            category="4W",
-            make="AutoDoc",
+            category="4W", # You might want to make this dynamic later
+            make=vehicle_make, # [FIX] No longer hardcoded "AutoDoc"
             manufacturing_year=2025,
             is_active=True
         )
